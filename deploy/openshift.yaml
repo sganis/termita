@@ -1,6 +1,43 @@
 # deploy/openshift.yaml
-# termita on OpenShift: Deployment + Service + edge-TLS Route.
-# Edit the image reference below, then: oc apply -f deploy/openshift.yaml
+# termita on OpenShift via an in-cluster binary build. The GitHub Actions bundle
+# (the prebuilt glibc `termita` binary) is uploaded with `oc start-build --from-dir`;
+# OpenShift wraps it in a minimal UBI9 image (deploy/Dockerfile — just a COPY, no
+# JS/Rust build) and the Deployment rolls out automatically via an image trigger.
+#
+# Apply + build + roll out with deploy/deploy.sh, or manually:
+#   oc apply -f deploy/openshift.yaml
+#   oc start-build termita --from-dir=<bundle-dir> --follow   # dir holds termita + Dockerfile
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: termita
+  labels:
+    app: termita
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: termita
+  labels:
+    app: termita
+spec:
+  # Binary source: builds are driven only by `oc start-build --from-dir`, which
+  # uploads the bundle (the `termita` binary + deploy/Dockerfile) as the context.
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: termita:latest
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -8,6 +45,11 @@ metadata:
   name: termita
   labels:
     app: termita
+  annotations:
+    # When termita:latest is (re)built, OpenShift rewrites the container image below
+    # to the in-cluster ImageStream pullspec and triggers a rollout.
+    image.openshift.io/triggers: |
+      [{"from":{"kind":"ImageStreamTag","name":"termita:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"termita\")].image"}]
 spec:
   replicas: 1
   selector:
@@ -20,8 +62,9 @@ spec:
     spec:
       containers:
         - name: termita
-          # CHANGE ME: point at wherever you pushed the image.
-          image: quay.io/CHANGE_ME/termita:0.1.0
+          # Placeholder; the image trigger above rewrites this to the resolved
+          # ImageStream pullspec once the first build completes.
+          image: termita:latest
           ports:
             - containerPort: 3000
               name: http

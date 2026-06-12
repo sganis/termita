@@ -1,13 +1,16 @@
 # .github/workflows/build.yml
-# Build the full app in CI and publish the ready-to-run binary as a downloadable
-# artifact, so on-prem (OpenShift) needs to build/ship nothing — no bun, no cargo,
-# no node_modules, no Rust/JS dependencies.
+# Build the "cloud bundle" the same way the sibling project dutopia/duapi does:
+# an ordinary glibc release binary (NOT static musl, NOT a scratch image), bundled
+# into cloud/ and published as a downloadable artifact. You copy cloud/ to your
+# on-prem OpenShift and run it — no JS/Rust toolchain or dependencies needed there.
 #
-# The artifact is a single static `x86_64-unknown-linux-musl` binary with the Svelte
-# frontend embedded (rust-embed, release build). Being static musl it has zero
-# runtime dependencies and runs as-is on any Linux, including UBI9-based OpenShift
-# nodes. We reuse the project Dockerfile (bun -> rust:alpine static musl -> scratch)
-# so CI produces the exact same binary as the container image, then copy it out.
+# Two adaptations vs dutopia: termita uses bun (not npm), and it EMBEDS the Svelte
+# frontend into the binary via rust-embed, so the frontend is built BEFORE
+# `cargo build --release` and the bundle is just the binary (no separate public/).
+#
+# The build runs inside the UBI9 image so the binary links against UBI9's glibc and
+# is guaranteed to run on UBI9-based OpenShift. checkout/upload run on the host
+# (they need Node, which the UBI9 base lacks); only the compile runs in the container.
 
 name: build
 
@@ -18,35 +21,56 @@ on:
   workflow_dispatch:
 
 jobs:
-  binary:
+  bundle:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image (bun frontend -> static musl binary on scratch)
-        run: docker build -t termita:ci .
-
-      - name: Extract the static binary from the image
+      - name: Build glibc release binary inside UBI9
         run: |
-          id=$(docker create termita:ci)
-          docker cp "$id:/termita" ./termita
-          docker rm "$id"
-          chmod +x ./termita
+          docker run --rm -v "$PWD:/src" -w /src \
+            registry.access.redhat.com/ubi9/ubi:latest \
+            bash -euo pipefail -c '
+              dnf -y install gcc gcc-c++ make tar gzip xz unzip findutils which >/dev/null
 
-      - name: Verify it is a static x86_64 ELF (no dynamic deps)
+              # Rust (minimal stable toolchain)
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              source "$HOME/.cargo/env"
+
+              # Bun (glibc build) for the frontend
+              curl -fsSL https://bun.sh/install | bash
+              export PATH="$HOME/.bun/bin:$PATH"
+
+              # Frontend FIRST — rust-embed bakes web/dist into the release binary
+              cd web && bun install --frozen-lockfile && bun run build && cd ..
+
+              # glibc release binary, frontend embedded (compile is the gate)
+              cargo build --release
+
+              mkdir -p cloud
+              cp target/release/termita cloud/termita
+              file cloud/termita
+            '
+
+      - name: Add a run note and fix ownership (container writes as root)
         run: |
-          file ./termita
-          # Rust musl builds emit a static-PIE binary, which `file` describes as
-          # "static-pie linked" (not "statically linked"). Both are dependency-free;
-          # the real invariant is "no dynamic deps", so fail only if it's dynamic.
-          if file ./termita | grep -q "dynamically linked"; then
-            echo "ERROR: termita is dynamically linked — expected a static binary." >&2
-            exit 1
-          fi
+          sudo chown -R "$USER:$USER" cloud
+          cat > cloud/README.txt <<'EOF'
+          termita cloud bundle — built on UBI9 (glibc), runs on UBI9-based OpenShift.
 
-      - name: Upload the binary artifact
+          The Svelte frontend is embedded in the binary; this single file is the whole app.
+          Run it directly (see the project README "Configuration" for all env vars):
+
+            PORT=3000 HOST=0.0.0.0 ALLOWED_HOSTS=10.0.0.5 ./termita
+
+          Deploy to OpenShift (e.g. the Red Hat Developer Sandbox) with deploy/deploy.sh:
+          it uploads this bundle and runs an in-cluster `oc` binary build. See
+          deploy/openshift.yaml and deploy/Dockerfile.
+          EOF
+
+      - name: Upload the cloud bundle
         uses: actions/upload-artifact@v4
         with:
-          name: termita-linux-x86_64-musl
-          path: ./termita
+          name: termita-cloud-ubi9
+          path: cloud/**
           if-no-files-found: error

@@ -103,6 +103,20 @@ See **[`doc/deploy.md`](doc/deploy.md)** for full instructions — Docker/Podman
 UID under the default `restricted-v2` SCC (no `anyuid`, no `/etc/passwd` hack), so
 deploying is just running one ~3.4 MB container behind an edge-TLS Route.
 
+**Scripted OpenShift rollout.** [`deploy/deploy.sh`](deploy/deploy.sh) deploys termita
+to OpenShift (e.g. the Red Hat Developer Sandbox) from a **prebuilt Linux binary** —
+no JS/Rust toolchain on the cluster. It applies the manifests
+([`deploy/openshift.yaml`](deploy/openshift.yaml): ImageStream + BuildConfig +
+Deployment + Service + edge-TLS Route) and runs an in-cluster `oc` binary build that
+wraps the binary in a minimal UBI9 image ([`deploy/Dockerfile`](deploy/Dockerfile)).
+By default it downloads the binary from the latest CI build; to use the prebuilt one
+committed at [`deploy/termita`](deploy/termita) instead, point it at that folder:
+
+```bash
+oc login --token=sha256~… --server=https://api.<sandbox>.openshiftapps.com:6443
+deploy/deploy.sh deploy/        # uses the committed deploy/termita binary
+```
+
 ## Local development
 
 For frontend work with hot-reload, run the backend and the Vite dev server side by
@@ -134,6 +148,7 @@ termita/
 │  ├─ vite.config.js / svelte.config.js / package.json
 │  └─ dist/              build output (gitignored, embedded into the binary)
 ├─ Dockerfile           bun build → static musl cargo build → scratch
+├─ deploy/              OpenShift rollout: deploy.sh, openshift.yaml, UBI9 Dockerfile, prebuilt binary
 └─ doc/spec.md          specification
 ```
 
