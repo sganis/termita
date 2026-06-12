@@ -34,6 +34,11 @@ fn default_port() -> u16 { 22 }
 fn default_cols() -> u32 { 80 }
 fn default_rows() -> u32 { 24 }
 
+/// An empty allowlist permits any host; otherwise the host must be listed exactly.
+fn host_allowed(allowed: &[String], host: &str) -> bool {
+    allowed.is_empty() || allowed.iter().any(|h| h == host)
+}
+
 pub async fn handle(mut ws: WebSocket, allowed: &[String]) {
     // 1) Wait for the opening `connect` frame.
     let conn = match recv_connect(&mut ws).await {
@@ -46,7 +51,7 @@ pub async fn handle(mut ws: WebSocket, allowed: &[String]) {
     if host.is_empty() || user.is_empty() {
         return err(&mut ws, "Host and username are required.").await;
     }
-    if !allowed.is_empty() && !allowed.iter().any(|h| h == &host) {
+    if !host_allowed(allowed, &host) {
         return err(&mut ws, &format!("Host not allowed: {host}")).await;
     }
 
@@ -143,4 +148,38 @@ async fn err(ws: &mut WebSocket, reason: &str) {
 
 fn text(s: &str) -> Message {
     Message::Text(s.to_string().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn allowlist_empty_allows_any() {
+        assert!(host_allowed(&[], "anything"));
+    }
+
+    #[test]
+    fn allowlist_restricts_to_listed_hosts() {
+        let allowed = vec!["a.example".to_string(), "b.example".to_string()];
+        assert!(host_allowed(&allowed, "b.example"));
+        assert!(!host_allowed(&allowed, "c.example"));
+    }
+
+    #[test]
+    fn connect_applies_defaults_when_omitted() {
+        let c: Connect = serde_json::from_value(json!({ "host": "h", "user": "u" })).unwrap();
+        assert_eq!((c.host.as_str(), c.user.as_str(), c.password.as_str()), ("h", "u", ""));
+        assert_eq!((c.port, c.cols, c.rows), (22, 80, 24));
+    }
+
+    #[test]
+    fn connect_parses_explicit_values() {
+        let c: Connect = serde_json::from_value(json!({
+            "host": "h", "user": "u", "port": 2222, "password": "p", "cols": 120, "rows": 40
+        }))
+        .unwrap();
+        assert_eq!((c.port, c.cols, c.rows, c.password.as_str()), (2222, 120, 40, "p"));
+    }
 }

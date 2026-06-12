@@ -138,3 +138,35 @@ fn connect_reason(host: &str, e: &russh::Error) -> String {
     }
     format!("Could not connect: {e}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    fn io(e: Error) -> russh::Error {
+        russh::Error::IO(e)
+    }
+
+    #[test]
+    fn refused_and_timeout_map_to_clean_reasons() {
+        assert_eq!(connect_reason("h", &io(ErrorKind::ConnectionRefused.into())), "Connection refused.");
+        assert_eq!(connect_reason("h", &io(ErrorKind::TimedOut.into())), "Connection timed out.");
+    }
+
+    #[test]
+    fn dns_failures_are_prettified_on_both_platforms() {
+        // Linux phrasing
+        let linux = io(Error::new(ErrorKind::Other, "failed to lookup address information: Name or service not known"));
+        assert_eq!(connect_reason("badhost", &linux), "Could not resolve hostname badhost.");
+        // Windows phrasing
+        let win = io(Error::new(ErrorKind::Other, "No such host is known. (os error 11001)"));
+        assert_eq!(connect_reason("badhost", &win), "Could not resolve hostname badhost.");
+    }
+
+    #[test]
+    fn unknown_io_errors_fall_through_to_generic() {
+        let other = io(Error::new(ErrorKind::Other, "boom"));
+        assert_eq!(connect_reason("h", &other), "Could not connect: boom");
+    }
+}
