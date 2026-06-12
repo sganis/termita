@@ -1,0 +1,47 @@
+# .github/workflows/build.yml
+# Build the full app in CI and publish the ready-to-run binary as a downloadable
+# artifact, so on-prem (OpenShift) needs to build/ship nothing — no bun, no cargo,
+# no node_modules, no Rust/JS dependencies.
+#
+# The artifact is a single static `x86_64-unknown-linux-musl` binary with the Svelte
+# frontend embedded (rust-embed, release build). Being static musl it has zero
+# runtime dependencies and runs as-is on any Linux, including UBI9-based OpenShift
+# nodes. We reuse the project Dockerfile (bun -> rust:alpine static musl -> scratch)
+# so CI produces the exact same binary as the container image, then copy it out.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (bun frontend -> static musl binary on scratch)
+        run: docker build -t termita:ci .
+
+      - name: Extract the static binary from the image
+        run: |
+          id=$(docker create termita:ci)
+          docker cp "$id:/termita" ./termita
+          docker rm "$id"
+          chmod +x ./termita
+
+      - name: Verify it is a static x86_64 ELF (no dynamic deps)
+        run: |
+          file ./termita
+          # `file` prints "statically linked"; fail loudly if it ever isn't.
+          file ./termita | grep -q "statically linked"
+
+      - name: Upload the binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: termita-linux-x86_64-musl
+          path: ./termita
+          if-no-files-found: error
