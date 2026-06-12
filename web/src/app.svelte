@@ -22,7 +22,7 @@
 
   function saveHistory() {
     const rest = history.filter((h) => !(h.host === host && h.user === user && h.port === port));
-    history = [{ host, user, port }, ...rest].slice(0, 6);
+    history = [{ host, user, port, jump }, ...rest].slice(0, 6);
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
   }
 
@@ -34,9 +34,10 @@
   let port = $state(seed.port || "22");
   let user = $state(seed.user || "");
   let password = $state("");
+  let jump = $state(seed.jump || ""); // optional "user@jumper" bastion
   let showPassword = $state(false);
   let capsOn = $state(false);
-  let showAdvanced = $state(!!seed.port && seed.port !== "22");
+  let showAdvanced = $state((!!seed.port && seed.port !== "22") || !!seed.jump);
 
   let termEl = $state(null);
   let hostEl = $state(null);
@@ -70,7 +71,8 @@
     host = h.host;
     user = h.user;
     port = h.port || "22";
-    showAdvanced = port !== "22";
+    jump = h.jump || "";
+    showAdvanced = port !== "22" || !!jump;
     passwordEl?.focus();
   }
 
@@ -114,7 +116,7 @@
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ t: "connect", host, port: Number(port) || 22, user, password, cols: 80, rows: 24 }));
+      ws.send(JSON.stringify({ t: "connect", host, port: Number(port) || 22, user, password, jump, cols: 80, rows: 24 }));
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
@@ -125,7 +127,8 @@
           status = "";
           view = "term"; // terminal is created by the $effect below
         } else if (m.t === "status") {
-          if (m.phase === "auth") status = "Authenticating…";
+          if (m.phase === "jump") status = "Connecting via jump host…";
+          else if (m.phase === "auth") status = "Authenticating…";
         } else if (m.t === "err") {
           error = m.reason || "Connection failed.";
           status = "";
@@ -248,6 +251,10 @@
         <span class="caret">{showAdvanced ? "▾" : "▸"}</span> Advanced
       </button>
       {#if showAdvanced}
+        <label class="field">
+          <span class="field-label">Jump host (optional)</span>
+          <input placeholder="user@jumper" bind:value={jump} disabled={view === "connecting"} autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </label>
         <label class="field">
           <span class="field-label">SSH port</span>
           <input placeholder="22" bind:value={port} disabled={view === "connecting"} inputmode="numeric" />

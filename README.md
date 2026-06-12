@@ -41,13 +41,16 @@ speaks the SSH protocol directly, which removes a whole class of problems:
 
 ## How it works
 
-1. The browser loads the connect form (host / username / password; the SSH port is
-   under **Advanced**). The last host/username/port are remembered in `localStorage`;
-   the password is not.
-2. On submit it opens `/ws` and sends `{t:"connect", host, user, port, password, cols, rows}`.
+1. The browser loads the connect form (host / username / password; the SSH port and
+   an optional **jump host** — `user@jumper` — are under **Advanced**). The last
+   host/username/port/jump are remembered in `localStorage`; the password is not.
+2. On submit it opens `/ws` and sends `{t:"connect", host, user, port, password, jump, cols, rows}`.
 3. The server opens an SSH session with russh, authenticates with the password
    (trying keyboard-interactive as a fallback), then requests a PTY and a login
-   shell. On success it sends `{t:"ready"}`; on failure `{t:"err", reason}`.
+   shell. On success it sends `{t:"ready"}`; on failure `{t:"err", reason}`. When a
+   jump host is given it first connects and authenticates to the bastion (same
+   password), opens a direct-tcpip tunnel to the target, and runs the target session
+   over it.
 4. After `ready` it's a transparent relay: keystrokes → SSH channel, remote output →
    browser (binary frames), plus terminal resize. When the session ends the socket
    closes and the UI shows a "New connection" button.
@@ -159,7 +162,7 @@ termita/
 
 Client → server (JSON text frames):
 
-- `{"t":"connect","host":…,"user":…,"port":22,"password":…,"cols":N,"rows":M}` — open the session
+- `{"t":"connect","host":…,"user":…,"port":22,"password":…,"jump":"user@jumper","cols":N,"rows":M}` — open the session (`jump` optional; empty/absent = direct)
 - `{"t":"in","d":"<keystrokes>"}` — input
 - `{"t":"sz","cols":N,"rows":M}` — resize
 

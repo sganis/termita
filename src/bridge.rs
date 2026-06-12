@@ -25,6 +25,9 @@ struct Connect {
     port: u16,
     #[serde(default)]
     password: String,
+    /// Optional jump (bastion) host as `user@host[:port]`; empty = no jump.
+    #[serde(default)]
+    jump: String,
     #[serde(default = "default_cols")]
     cols: u32,
     #[serde(default = "default_rows")]
@@ -37,6 +40,31 @@ fn default_rows() -> u32 { 24 }
 /// An empty allowlist permits any host; otherwise the host must be listed exactly.
 fn host_allowed(allowed: &[String], host: &str) -> bool {
     allowed.is_empty() || allowed.iter().any(|h| h == host)
+}
+
+/// Parse a jump-host string `user@host[:port]` into an `ssh::Jump`. The user is
+/// optional (defaults to the target's username); a missing or malformed port
+/// falls back to 22 so the jump is never silently dropped. Empty input → no jump.
+fn parse_jump(s: &str, default_user: &str) -> Option<ssh::Jump> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (user, hostport) = match s.split_once('@') {
+        Some((u, hp)) => (u.trim().to_string(), hp.trim()),
+        None => (default_user.to_string(), s),
+    };
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => match p.parse::<u16>() {
+            Ok(port) => (h.to_string(), port),
+            Err(_) => (hostport.to_string(), 22),
+        },
+        None => (hostport.to_string(), 22),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(ssh::Jump { host, port, user })
 }
 
 pub async fn handle(mut ws: WebSocket, allowed: &[String]) {
@@ -55,6 +83,16 @@ pub async fn handle(mut ws: WebSocket, allowed: &[String]) {
         return err(&mut ws, &format!("Host not allowed: {host}")).await;
     }
 
+    // Optional jump host (the bastion is dialed directly by the relay, so it is
+    // subject to the same allowlist as the target).
+    let jump = parse_jump(&conn.jump, &user);
+    if let Some(j) = &jump {
+        if !host_allowed(allowed, &j.host) {
+            return err(&mut ws, &format!("Jump host not allowed: {}", j.host)).await;
+        }
+        let _ = ws.send(text(r#"{"t":"status","phase":"jump"}"#)).await;
+    }
+
     // 2) Connect + authenticate (russh bundles transport, auth, and shell setup).
     let params = ssh::Params {
         host,
@@ -63,6 +101,7 @@ pub async fn handle(mut ws: WebSocket, allowed: &[String]) {
         password: conn.password,
         cols: conn.cols,
         rows: conn.rows,
+        jump,
     };
     let shell = match ssh::connect(&params).await {
         Ok(s) => s,
@@ -181,5 +220,44 @@ mod tests {
         }))
         .unwrap();
         assert_eq!((c.port, c.cols, c.rows, c.password.as_str()), (2222, 120, 40, "p"));
+    }
+
+    #[test]
+    fn connect_jump_defaults_empty_and_parses_when_present() {
+        let c: Connect = serde_json::from_value(json!({ "host": "h", "user": "u" })).unwrap();
+        assert_eq!(c.jump.as_str(), "");
+        let c: Connect =
+            serde_json::from_value(json!({ "host": "h", "user": "u", "jump": "a@b" })).unwrap();
+        assert_eq!(c.jump.as_str(), "a@b");
+    }
+
+    #[test]
+    fn parse_jump_empty_is_none() {
+        assert!(parse_jump("", "me").is_none());
+        assert!(parse_jump("   ", "me").is_none());
+    }
+
+    #[test]
+    fn parse_jump_host_only_defaults_user_and_port() {
+        let j = parse_jump("bastion", "me").unwrap();
+        assert_eq!((j.host.as_str(), j.port, j.user.as_str()), ("bastion", 22, "me"));
+    }
+
+    #[test]
+    fn parse_jump_user_at_host() {
+        let j = parse_jump("admin@bastion", "me").unwrap();
+        assert_eq!((j.host.as_str(), j.port, j.user.as_str()), ("bastion", 22, "admin"));
+    }
+
+    #[test]
+    fn parse_jump_user_at_host_port() {
+        let j = parse_jump("admin@bastion:2222", "me").unwrap();
+        assert_eq!((j.host.as_str(), j.port, j.user.as_str()), ("bastion", 2222, "admin"));
+    }
+
+    #[test]
+    fn parse_jump_bad_port_falls_back_to_22() {
+        let j = parse_jump("admin@bastion:nope", "me").unwrap();
+        assert_eq!((j.host.as_str(), j.port), ("bastion:nope", 22));
     }
 }

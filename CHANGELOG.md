@@ -5,6 +5,13 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- Optional **jump host (ProxyJump)**: enter `user@jumper` under **Advanced** to reach
+  a target that's only accessible through a bastion. The relay connects and
+  authenticates to the bastion, opens a direct-tcpip tunnel, and runs the target SSH
+  session over it. The same password authenticates both hops; the jump field is
+  remembered in `localStorage` (never the password) and is subject to `ALLOWED_HOSTS`.
+
 ### Changed
 - Rewrote the backend from Node (`node-pty` + a spawned OpenSSH client) to a single
   Rust binary (`axum` + native pure-Rust `russh`). The Svelte + xterm.js frontend is
