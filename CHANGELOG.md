@@ -11,6 +11,13 @@ All notable changes to this project are documented here. Format based on
   authenticates to the bastion, opens a direct-tcpip tunnel, and runs the target SSH
   session over it. The same password authenticates both hops; the jump field is
   remembered in `localStorage` (never the password) and is subject to `ALLOWED_HOSTS`.
+- **Scripted OpenShift deployment** (`deploy/deploy.sh`): applies the manifests and
+  runs an in-cluster *COPY-only* UBI9 binary build (ImageStream + BuildConfig +
+  Deployment image trigger + Service + edge-TLS Route), so the cluster compiles
+  nothing. A prebuilt binary is committed at `deploy/termita`; see `doc/deploy.md`.
+- **CI "cloud bundle" artifact** (`termita-cloud-ubi9`): the `build` workflow now
+  publishes a glibc release binary built on UBI9, downloadable for the scripted deploy.
+- **SVG favicon** in the browser tab.
 
 ### Changed
 - Rewrote the backend from Node (`node-pty` + a spawned OpenSSH client) to a single
