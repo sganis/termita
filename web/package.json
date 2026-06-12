@@ -1,16 +1,11 @@
 {
-  "name": "termita",
+  "name": "termita-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "node-pty": "^1.0.0",
-    "ws": "^8.18.0"
+    "build": "vite build"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

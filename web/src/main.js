@@ -1,4 +1,4 @@
-// src/main.js
+// web/src/main.js
 import { mount } from "svelte";
 import App from "./app.svelte";
 

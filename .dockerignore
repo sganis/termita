@@ -1,7 +1,11 @@
-node_modules
+# build artifacts (rebuilt inside the image)
+target
+**/node_modules
 web/dist
+# vcs / docs / scratch
 .git
 .gitignore
+.dockerignore
 *.log
 doc
-readme.md
+README.md

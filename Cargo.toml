@@ -1,0 +1,23 @@
+# Cargo.toml
+[package]
+name = "termita"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+axum = { version = "0.8", features = ["ws"] }
+# Pure-Rust-friendly crypto: drop the default aws-lc-rs backend (needs NASM/cmake,
+# hostile to both Windows and the musl static build) and use `ring` instead.
+russh = { version = "0.61", default-features = false, features = ["flate2", "ring", "rsa"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Small, self-contained release binary (the whole point of the Rust rewrite).
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

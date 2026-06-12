@@ -1,56 +1,33 @@
 # Dockerfile
-# ---------- build stage: Bun installs deps, builds the Svelte 5 bundle ----------
-FROM registry.access.redhat.com/ubi9/nodejs-20 AS build
+# Three stages: build the Svelte bundle (bun) -> compile a static musl binary that
+# embeds that bundle (cargo + ring) -> ship just the binary on `scratch`.
+# No Node, no Bun, no node_modules, no ssh client, no /etc/passwd hack at runtime.
 
-USER 0
+# 1) Frontend -> /web/dist
+FROM oven/bun:1 AS web
+WORKDIR /web
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN bun run build
 
-# unzip is needed by the Bun installer.
-RUN dnf install -y unzip tar gzip && dnf clean all
+# 2) Static Rust binary. Alpine's default Rust target is x86_64-unknown-linux-musl,
+#    so `cargo build` already yields a fully static binary. rust-embed bakes
+#    /web/dist into the binary at compile time.
+FROM rust:1-alpine AS server
+RUN apk add --no-cache build-base
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY --from=web /web/dist ./web/dist
+RUN cargo build --release
 
-# Install Bun -> /usr/local/bin/bun
-ENV BUN_INSTALL=/usr/local
-RUN curl -fsSL https://bun.sh/install | bash
-
-WORKDIR /build
-
-# Deps first for layer caching.
-COPY package.json bun.lock ./
-RUN bun install
-
-# Build the Svelte 5 frontend -> web/dist, then prune to production deps
-# (runtime only needs node-pty + ws; node-pty ships a prebuilt binary).
-COPY . .
-RUN bun run build && rm -rf node_modules && bun install --production
-
-# ---------- runtime stage: minimal UBI9 Node + node-pty ----------
-FROM registry.access.redhat.com/ubi9/nodejs-20-minimal
-
-USER 0
-
-# termita only relays to a remote shell — it needs the ssh client (and a shell
-# for the entrypoint). The remote host provides vim/top/etc.
-RUN microdnf install -y --nodocs \
-    bash \
-    openssh-clients \
-    && microdnf clean all
-
-# The minimal base has no passwd entry for uid 1001; the ssh client calls
-# getpwuid() and fails ("No user exists for uid 1001") without one.
-RUN echo 'termita:x:1001:0:termita:/tmp:/bin/bash' >> /etc/passwd
-
-ENV HOME=/tmp \
-    TERM=xterm-256color \
-    NODE_ENV=production \
-    PORT=3000 \
+# 3) Runtime: nothing but the binary. Runs as a non-root, arbitrary UID — russh
+#    never calls getpwuid, so OpenShift's random UID is fine (no passwd entry needed).
+FROM scratch
+COPY --from=server /src/target/release/termita /termita
+ENV PORT=3000 \
     HOST=0.0.0.0
-
-WORKDIR /app
-
-COPY --from=build /build/node_modules ./node_modules
-COPY --from=build /build/web/dist ./web/dist
-COPY --from=build /build/server.js ./
-
 EXPOSE 3000
 USER 1001
-
-ENTRYPOINT ["node", "/app/server.js"]
+ENTRYPOINT ["/termita"]
