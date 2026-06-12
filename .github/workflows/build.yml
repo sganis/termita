@@ -36,8 +36,13 @@ jobs:
       - name: Verify it is a static x86_64 ELF (no dynamic deps)
         run: |
           file ./termita
-          # `file` prints "statically linked"; fail loudly if it ever isn't.
-          file ./termita | grep -q "statically linked"
+          # Rust musl builds emit a static-PIE binary, which `file` describes as
+          # "static-pie linked" (not "statically linked"). Both are dependency-free;
+          # the real invariant is "no dynamic deps", so fail only if it's dynamic.
+          if file ./termita | grep -q "dynamically linked"; then
+            echo "ERROR: termita is dynamically linked — expected a static binary." >&2
+            exit 1
+          fi
 
       - name: Upload the binary artifact
         uses: actions/upload-artifact@v4
