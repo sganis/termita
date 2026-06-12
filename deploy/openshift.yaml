@@ -1,0 +1,96 @@
+# deploy/openshift.yaml
+# termita on OpenShift: Deployment + Service + edge-TLS Route.
+# Edit the image reference below, then: oc apply -f deploy/openshift.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: termita
+  labels:
+    app: termita
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: termita
+  template:
+    metadata:
+      labels:
+        app: termita
+    spec:
+      containers:
+        - name: termita
+          # CHANGE ME: point at wherever you pushed the image.
+          image: quay.io/CHANGE_ME/termita:0.1.0
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: HOST
+              value: "0.0.0.0"
+            # Restrict which SSH targets are reachable (recommended):
+            # - name: ALLOWED_HOSTS
+            #   value: "10.0.0.5,10.0.0.6"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          # Aligns with OpenShift's default restricted-v2 SCC. No runAsUser:
+          # the binary runs fine under the arbitrary UID OpenShift assigns.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: termita
+  labels:
+    app: termita
+spec:
+  selector:
+    app: termita
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: termita
+  labels:
+    app: termita
+spec:
+  to:
+    kind: Service
+    name: termita
+  port:
+    targetPort: http
+  # Edge TLS: HTTPS/WSS terminates at the router (encrypts the password in transit
+  # to the cluster) and redirects plain HTTP to HTTPS.
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

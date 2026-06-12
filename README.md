@@ -56,28 +56,64 @@ Nothing is stored: the password is used once to authenticate and discarded.
 
 ## Build & run
 
+**Prerequisites:** a [Rust toolchain](https://rustup.rs) and [Bun](https://bun.sh).
+You do **not** need Docker to run termita locally — Docker is only for building the
+deployable container image.
+
+### Run locally (cargo)
+
+Build the frontend once, then build and run the server:
+
+```bash
+cd web && bun install && bun run build && cd ..   # → web/dist
+cargo run                                         # builds + runs on http://localhost:3000
+```
+
+`cargo run` compiles the binary (with the frontend embedded) and starts the server;
+open http://localhost:3000 and enter host / username / password. Configure with
+environment variables (see [Configuration](#configuration)):
+
+```bash
+PORT=8080 ALLOWED_HOSTS=10.0.0.5 cargo run
+```
+
+For a standalone, optimized artifact, `cargo build --release` produces **one
+self-contained binary** at `target/release/termita` (`termita.exe` on Windows) —
+copy it anywhere and run it; it needs no files beside it.
+
+### Build the container image (for deployment)
+
 ```bash
 docker build -t termita .
 docker run --rm -it -p 127.0.0.1:3000:3000 termita
-# open http://localhost:3000 → enter host / username / password → Connect
 ```
 
-The build is self-contained: bun builds the frontend, cargo builds the static
-binary that embeds it, and the runtime stage is `FROM scratch`. The only thing the
-**build** needs network for is bun + cargo dependency downloads; run `docker build`
-where you have internet (e.g. locally or in CI) and push the image to OpenShift's
-registry, or vendor dependencies for an offline in-cluster build.
+The image is a static binary on `FROM scratch` and is fully self-contained; the
+build only needs network for bun + cargo downloads. See [Deployment](#deployment)
+for pushing it to a registry / OpenShift.
+
+## Deployment
+
+See **[`doc/deploy.md`](doc/deploy.md)** for full instructions — Docker/Podman and
+**OpenShift** (build off-cluster → push → run), with a ready-to-apply manifest at
+[`deploy/openshift.yaml`](deploy/openshift.yaml). In short: termita runs under any
+UID under the default `restricted-v2` SCC (no `anyuid`, no `/etc/passwd` hack), so
+deploying is just running one ~3.4 MB container behind an edge-TLS Route.
 
 ## Local development
 
+For frontend work with hot-reload, run the backend and the Vite dev server side by
+side — Vite serves the UI (HMR, open the URL it prints) and proxies `/ws` to the
+backend:
+
 ```bash
-cargo run                 # terminal 1: Rust relay on :3000 (serves web/dist)
-cd web && bun run dev     # terminal 2: Vite dev server (proxies /ws → :3000)
+cargo run                 # terminal 1: Rust relay on :3000 (handles /ws)
+cd web && bun run dev     # terminal 2: Vite dev server with HMR → proxies /ws → :3000
 ```
 
-Build the frontend once (`cd web && bun run build`) so the backend has a `web/dist`
-to serve/embed. In debug builds `rust-embed` reads `web/dist` from disk, so a
-frontend rebuild is picked up without recompiling the backend.
+Unlike *Run locally* above, edits in `web/src` appear instantly without a rebuild.
+(`cargo run` still needs `web/dist` to exist to compile, so run `cd web && bun run
+build` once; in debug builds `rust-embed` reads it from disk.)
 
 ## Folder structure
 
